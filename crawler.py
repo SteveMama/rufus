@@ -16,8 +16,9 @@ from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 
 class RufusCrawler:
-    def __init__(self, base_url):
+    def __init__(self, base_url, user_prompt):
         self.base_url = base_url
+        self.user_prompt = user_prompt.lower()
         self.visited_urls = set()
         self.extracted_data = {}
         self.user_agents = [
@@ -46,10 +47,15 @@ class RufusCrawler:
                     if sibling.name in ['h1', 'h2', 'h3']:
                         break
                     section_text = sibling.get_text(strip=True)
-                    if section_text:
+                    if section_text and self.is_relevant(section_text):
                         sections.append(section_text)
-                content[heading_text] = sections
+                if sections:
+                    content[heading_text] = sections
         return content
+
+    def is_relevant(self, text):
+        keywords = self.user_prompt.split()
+        return any(keyword in text.lower() for keyword in keywords)
 
     async def fetch(self, session, url):
         headers = {
@@ -103,7 +109,7 @@ class RufusCrawler:
             return
         self.visited_urls.add(url)
         if use_js:
-            soup = self.fetch_js_content(url)
+            soup = await asyncio.to_thread(self.fetch_js_content, url)
         else:
             soup = await self.fetch(session, url)
         if soup:
@@ -132,6 +138,7 @@ class RufusCrawler:
 
 if __name__ == "__main__":
     base_url = "https://medium.com"
-    crawler = RufusCrawler(base_url)
+    user_prompt = "scrape application information"
+    crawler = RufusCrawler(base_url, user_prompt)
     asyncio.run(crawler.start_crawl())
     crawler.save_to_json()
