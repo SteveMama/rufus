@@ -15,6 +15,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 import csv
+import time
 
 class RufusCrawler:
     def __init__(self, base_url, user_prompt):
@@ -52,6 +53,14 @@ class RufusCrawler:
                         sections.append(section_text)
                 if sections:
                     content[heading_text] = sections
+
+        # Extract paragraphs and other relevant content outside of headings
+        paragraphs = soup.find_all('p')
+        for idx, paragraph in enumerate(paragraphs, start=1):
+            paragraph_text = paragraph.get_text(strip=True)
+            if paragraph_text:
+                content[f'Paragraph {idx}'] = [paragraph_text]
+
         return content
 
     def is_relevant(self, text):
@@ -117,8 +126,9 @@ class RufusCrawler:
                 self.save_to_csv()
             if depth > 1:
                 links = self.extract_links(soup)
-                tasks = [self.crawl_page(link, session, depth - 1, use_js) for link in links]
-                await asyncio.gather(*tasks)
+                for link in links:
+                    await asyncio.sleep(random.uniform(0.5, 1.5))  # Add random delay between requests
+                    await self.crawl_page(link, session, depth - 1, use_js)
 
     async def start_crawl(self):
         async with aiohttp.ClientSession() as session:
@@ -131,8 +141,9 @@ class RufusCrawler:
                     self.save_to_json()
                     self.save_to_csv()
                 links = self.extract_links(soup)
-                tasks = [self.crawl_page(link, session, depth=2, use_js=True) for link in links]
-                await asyncio.gather(*tasks)
+                for link in links:
+                    await asyncio.sleep(random.uniform(1, 3))  # Add random delay between requests
+                    await self.crawl_page(link, session, depth=2, use_js=True)
 
     def save_to_json(self, filename='output.json'):
         if self.extracted_data:
