@@ -7,6 +7,13 @@ import random
 import asyncio
 import aiohttp
 from aiohttp import ClientResponseError, ClientConnectorError, ClientHttpProxyError, ServerTimeoutError
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
 
 class RufusCrawler:
     def __init__(self, base_url):
@@ -66,6 +73,22 @@ class RufusCrawler:
             print(f"Error accessing {url}: {e}")
             return None
 
+    def fetch_js_content(self, url):
+        try:
+            chrome_options = Options()
+            chrome_options.add_argument("--headless")
+            chrome_options.add_argument(f"user-agent={random.choice(self.user_agents)}")
+            driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
+            driver.get(url)
+            WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+            content = driver.page_source
+            driver.quit()
+            soup = BeautifulSoup(content, 'html.parser')
+            return soup
+        except Exception as e:
+            print(f"Error accessing {url} with JS rendering: {e}")
+            return None
+
     async def validate_link(self, session, url):
         try:
             async with session.head(url) as response:
@@ -75,18 +98,21 @@ class RufusCrawler:
         except (ClientResponseError, ClientConnectorError, ClientHttpProxyError, ServerTimeoutError, ValueError):
             return False
 
-    async def crawl_page(self, url, session, depth=2):
+    async def crawl_page(self, url, session, depth=2, use_js=False):
         if depth == 0 or url in self.visited_urls:
             return
         self.visited_urls.add(url)
-        soup = await self.fetch(session, url)
+        if use_js:
+            soup = self.fetch_js_content(url)
+        else:
+            soup = await self.fetch(session, url)
         if soup:
             content = self.extract_content(soup)
             if content:
                 self.extracted_data[url] = content
             if depth > 1:
                 links = self.extract_links(soup)
-                tasks = [self.crawl_page(link, session, depth - 1) for link in links if await self.validate_link(session, link)]
+                tasks = [self.crawl_page(link, session, depth - 1, use_js) for link in links if await self.validate_link(session, link)]
                 await asyncio.gather(*tasks)
 
     async def start_crawl(self):
@@ -97,7 +123,7 @@ class RufusCrawler:
                 if content:
                     self.extracted_data[self.base_url] = content
                 links = self.extract_links(soup)
-                tasks = [self.crawl_page(link, session, depth=2) for link in links if await self.validate_link(session, link)]
+                tasks = [self.crawl_page(link, session, depth=2, use_js=True) for link in links if await self.validate_link(session, link)]
                 await asyncio.gather(*tasks)
 
     def save_to_json(self, filename='output.json'):
