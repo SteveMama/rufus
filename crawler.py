@@ -20,6 +20,15 @@ import hashlib
 from concurrent.futures import ThreadPoolExecutor
 import os
 
+class RufusClient:
+    def __init__(self, api_key=None):
+        self.api_key = api_key
+
+    def scrape(self, url, user_prompt):
+        crawler = RufusCrawler(url, user_prompt)
+        asyncio.run(crawler.start_crawl())
+        return crawler.extracted_data
+
 class RufusCrawler:
     def __init__(self, base_url, user_prompt):
         self.base_url = base_url
@@ -32,7 +41,7 @@ class RufusCrawler:
             'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Safari/605.1.15',
             'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1'
         ]
-        self.refined_keywords = []
+        self.refined_keywords = user_prompt.split()
 
     def extract_links(self, soup):
         links = set()
@@ -46,7 +55,7 @@ class RufusCrawler:
         return [link[0] for link in sorted_links]
 
     def calculate_keyword_density(self, text):
-        keywords = self.user_prompt.split() + self.refined_keywords
+        keywords = self.refined_keywords
         word_count = len(text.split())
         if word_count == 0:
             return 0
@@ -65,22 +74,25 @@ class RufusCrawler:
                     content[current_heading] = []
             elif element.name == 'p' and current_heading:
                 paragraph_text = element.get_text(strip=True)
-                if paragraph_text:
+                if paragraph_text and self.is_relevant(paragraph_text):
                     content[current_heading].append(paragraph_text)
             elif element.name in ['ul', 'ol'] and current_heading:
-                list_items = [li.get_text(strip=True) for li in element.find_all('li') if li.get_text(strip=True)]
+                list_items = [li.get_text(strip=True) for li in element.find_all('li') if li.get_text(strip=True) and self.is_relevant(li.get_text(strip=True))]
                 if list_items:
                     content[current_heading].extend(list_items)
 
         # Extract meta description and keywords for additional context
         meta_description = soup.find('meta', attrs={'name': 'description'})
-        if meta_description and meta_description.get('content'):
+        if meta_description and meta_description.get('content') and self.is_relevant(meta_description.get('content')):
             content['Meta Description'] = [meta_description['content']]
         meta_keywords = soup.find('meta', attrs={'name': 'keywords'})
-        if meta_keywords and meta_keywords.get('content'):
+        if meta_keywords and meta_keywords.get('content') and self.is_relevant(meta_keywords.get('content')):
             content['Meta Keywords'] = [meta_keywords['content']]
 
         return content
+
+    def is_relevant(self, text):
+        return any(keyword in text.lower() for keyword in self.refined_keywords)
 
     async def fetch(self, session, url):
         headers = {

@@ -9,7 +9,7 @@ api_key = os.getenv('OPENAI_API_KEY')
 openai.api_key = api_key
 
 def get_response_from_openai(json_input, custom_prompt):
-    prompt = f"{custom_prompt}\nInput Data: {json.dumps(json_input)}\nPlease provide relevant keywords based on the given input data in json format."
+    prompt = f"{custom_prompt}\nInput Data: {json.dumps(json_input)}\nPlease provide relevant keywords based on the given input data."
 
     # Make the API call
     response = openai.ChatCompletion.create(
@@ -30,8 +30,8 @@ def get_response_from_openai(json_input, custom_prompt):
         return []
 
 if __name__ == "__main__":
-    base_url = "https://medium.com"
-    user_prompt = "AI"
+    base_url = "https://www.sf.gov/"
+    user_prompt = "We're making a chatbot for the HR in San Francisco."
     crawler = RufusCrawler(base_url, user_prompt)
 
     # Start crawling and refine keywords using LLM
@@ -41,5 +41,7 @@ if __name__ == "__main__":
             refined_keywords = get_response_from_openai(content, "Provide keywords for further crawling.")
             if refined_keywords:
                 crawler.refined_keywords = refined_keywords
+                print(f"Refined Keywords for {url}: {refined_keywords}")
+                print(f"Filtered Content for {url}: {json.dumps(content, indent=2)}")
 
     asyncio.run(start_crawl())
