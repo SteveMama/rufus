@@ -66,6 +66,15 @@ class RufusCrawler:
             print(f"Error accessing {url}: {e}")
             return None
 
+    async def validate_link(self, session, url):
+        try:
+            async with session.head(url) as response:
+                if response.status == 200:
+                    return True
+                return False
+        except (ClientResponseError, ClientConnectorError, ClientHttpProxyError, ServerTimeoutError, ValueError):
+            return False
+
     async def crawl_page(self, url, session, depth=2):
         if depth == 0 or url in self.visited_urls:
             return
@@ -77,7 +86,7 @@ class RufusCrawler:
                 self.extracted_data[url] = content
             if depth > 1:
                 links = self.extract_links(soup)
-                tasks = [self.crawl_page(link, session, depth - 1) for link in links]
+                tasks = [self.crawl_page(link, session, depth - 1) for link in links if await self.validate_link(session, link)]
                 await asyncio.gather(*tasks)
 
     async def start_crawl(self):
@@ -88,7 +97,7 @@ class RufusCrawler:
                 if content:
                     self.extracted_data[self.base_url] = content
                 links = self.extract_links(soup)
-                tasks = [self.crawl_page(link, session, depth=2) for link in links]
+                tasks = [self.crawl_page(link, session, depth=2) for link in links if await self.validate_link(session, link)]
                 await asyncio.gather(*tasks)
 
     def save_to_json(self, filename='output.json'):
