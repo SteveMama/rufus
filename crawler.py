@@ -16,6 +16,8 @@ from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 import csv
 import time
+import hashlib
+from concurrent.futures import ThreadPoolExecutor
 
 class RufusCrawler:
     def __init__(self, base_url, user_prompt):
@@ -23,6 +25,7 @@ class RufusCrawler:
         self.user_prompt = user_prompt.lower()
         self.visited_urls = set()
         self.extracted_data = {}
+        self.content_hashes = set()  # To avoid duplicate content
         self.user_agents = [
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3',
             'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Safari/605.1.15',
@@ -35,8 +38,18 @@ class RufusCrawler:
             href = link.get('href')
             full_url = urljoin(self.base_url, href)
             if re.match(r'^https?://', full_url) and full_url not in self.visited_urls:
-                links.add(full_url)
-        return links
+                keyword_density_score = self.calculate_keyword_density(link.get_text(strip=True))
+                links.add((full_url, keyword_density_score))
+        sorted_links = sorted(links, key=lambda x: x[1], reverse=True)
+        return [link[0] for link in sorted_links]
+
+    def calculate_keyword_density(self, text):
+        keywords = self.user_prompt.split()
+        word_count = len(text.split())
+        if word_count == 0:
+            return 0
+        keyword_count = sum(text.lower().count(keyword) for keyword in keywords)
+        return keyword_count / word_count
 
     def extract_content(self, soup):
         content = {}
@@ -56,6 +69,14 @@ class RufusCrawler:
                 list_items = [li.get_text(strip=True) for li in element.find_all('li') if li.get_text(strip=True)]
                 if list_items:
                     content[current_heading].extend(list_items)
+
+        # Extract meta description and keywords for additional context
+        meta_description = soup.find('meta', attrs={'name': 'description'})
+        if meta_description and meta_description.get('content'):
+            content['Meta Description'] = [meta_description['content']]
+        meta_keywords = soup.find('meta', attrs={'name': 'keywords'})
+        if meta_keywords and meta_keywords.get('content'):
+            content['Meta Keywords'] = [meta_keywords['content']]
 
         return content
 
@@ -88,7 +109,20 @@ class RufusCrawler:
             chrome_options.add_argument(f"user-agent={random.choice(self.user_agents)}")
             driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
             driver.get(url)
-            WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+            # Adaptive JavaScript handling: wait for specific elements if necessary
+            try:
+                WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+                # Handling "Load more" or similar buttons if present
+                while True:
+                    load_more_buttons = driver.find_elements(By.XPATH, "//*[contains(text(), 'Load more') or contains(text(), 'Show more')]")
+                    if load_more_buttons:
+                        for button in load_more_buttons:
+                            driver.execute_script("arguments[0].click();", button)
+                            time.sleep(2)
+                    else:
+                        break
+            except Exception:
+                pass
             content = driver.page_source
             driver.quit()
             soup = BeautifulSoup(content, 'html.parser')
@@ -105,6 +139,9 @@ class RufusCrawler:
         except (ClientResponseError, ClientConnectorError, ClientHttpProxyError, ServerTimeoutError, ValueError):
             return False
 
+    def content_hash(self, content):
+        return hashlib.md5(json.dumps(content, sort_keys=True).encode('utf-8')).hexdigest()
+
     async def crawl_page(self, url, session, depth=2, use_js=False):
         if depth == 0 or url in self.visited_urls:
             return
@@ -115,31 +152,33 @@ class RufusCrawler:
             soup = await self.fetch(session, url)
         if soup:
             content = self.extract_content(soup)
-            if content:
+            content_hash = self.content_hash(content)
+            if content and content_hash not in self.content_hashes:
+                self.content_hashes.add(content_hash)
                 self.extracted_data[url] = content
                 # Incrementally save progress
                 self.save_to_json()
                 self.save_to_csv()
             if depth > 1:
                 links = self.extract_links(soup)
-                for link in links:
-                    await asyncio.sleep(random.uniform(0.5, 1.5))  # Add random delay between requests
-                    await self.crawl_page(link, session, depth - 1, use_js)
+                tasks = [self.crawl_page(link, session, depth - 1, use_js) for link in links]
+                await asyncio.gather(*tasks)
 
     async def start_crawl(self):
         async with aiohttp.ClientSession() as session:
             soup = await self.fetch(session, self.base_url)
             if soup:
                 content = self.extract_content(soup)
-                if content:
+                content_hash = self.content_hash(content)
+                if content and content_hash not in self.content_hashes:
+                    self.content_hashes.add(content_hash)
                     self.extracted_data[self.base_url] = content
                     # Incrementally save progress
                     self.save_to_json()
                     self.save_to_csv()
                 links = self.extract_links(soup)
-                for link in links:
-                    await asyncio.sleep(random.uniform(0.5, 1.5))  # Add random delay between requests
-                    await self.crawl_page(link, session, depth=2, use_js=True)
+                tasks = [self.crawl_page(link, session, 2, True) for link in links]
+                await asyncio.gather(*tasks)
 
     def save_to_json(self, filename='output.json'):
         if self.extracted_data:
@@ -156,7 +195,7 @@ class RufusCrawler:
                         writer.writerow([url, heading, ' '.join(sections)])
 
 if __name__ == "__main__":
-    base_url = "https://medium.com"
+    base_url = "http://www.columbia.edu/~fdc/sample.html"
     user_prompt = "AI"
     crawler = RufusCrawler(base_url, user_prompt)
     asyncio.run(crawler.start_crawl())
