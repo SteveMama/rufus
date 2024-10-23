@@ -41,25 +41,21 @@ class RufusCrawler:
     def extract_content(self, soup):
         content = {}
         headings = soup.find_all(['h1', 'h2', 'h3'])
-        for heading in headings:
-            heading_text = heading.get_text(strip=True)
-            if heading_text:
-                sections = []
-                for sibling in heading.find_next_siblings():
-                    if sibling.name in ['h1', 'h2', 'h3']:
-                        break
-                    section_text = sibling.get_text(strip=True)
-                    if section_text:
-                        sections.append(section_text)
-                if sections:
-                    content[heading_text] = sections
+        current_heading = None
 
-        # Extract paragraphs and other relevant content outside of headings
-        paragraphs = soup.find_all('p')
-        for idx, paragraph in enumerate(paragraphs, start=1):
-            paragraph_text = paragraph.get_text(strip=True)
-            if paragraph_text:
-                content[f'Paragraph {idx}'] = [paragraph_text]
+        for element in soup.find_all(['h1', 'h2', 'h3', 'p', 'ul', 'ol']):
+            if element.name in ['h1', 'h2', 'h3']:
+                current_heading = element.get_text(strip=True)
+                if current_heading:
+                    content[current_heading] = []
+            elif element.name == 'p' and current_heading:
+                paragraph_text = element.get_text(strip=True)
+                if paragraph_text:
+                    content[current_heading].append(paragraph_text)
+            elif element.name in ['ul', 'ol'] and current_heading:
+                list_items = [li.get_text(strip=True) for li in element.find_all('li') if li.get_text(strip=True)]
+                if list_items:
+                    content[current_heading].extend(list_items)
 
         return content
 
@@ -142,7 +138,7 @@ class RufusCrawler:
                     self.save_to_csv()
                 links = self.extract_links(soup)
                 for link in links:
-                    await asyncio.sleep(random.uniform(1, 3))  # Add random delay between requests
+                    await asyncio.sleep(random.uniform(0.5, 1.5))  # Add random delay between requests
                     await self.crawl_page(link, session, depth=2, use_js=True)
 
     def save_to_json(self, filename='output.json'):
