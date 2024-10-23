@@ -18,6 +18,7 @@ import csv
 import time
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
+import os
 
 class RufusCrawler:
     def __init__(self, base_url, user_prompt):
@@ -31,6 +32,7 @@ class RufusCrawler:
             'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Safari/605.1.15',
             'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1'
         ]
+        self.refined_keywords = []
 
     def extract_links(self, soup):
         links = set()
@@ -44,7 +46,7 @@ class RufusCrawler:
         return [link[0] for link in sorted_links]
 
     def calculate_keyword_density(self, text):
-        keywords = self.user_prompt.split()
+        keywords = self.user_prompt.split() + self.refined_keywords
         word_count = len(text.split())
         if word_count == 0:
             return 0
@@ -79,10 +81,6 @@ class RufusCrawler:
             content['Meta Keywords'] = [meta_keywords['content']]
 
         return content
-
-    def is_relevant(self, text):
-        keywords = self.user_prompt.split()
-        return any(keyword in text.lower() for keyword in keywords)
 
     async def fetch(self, session, url):
         headers = {
@@ -193,9 +191,3 @@ class RufusCrawler:
                 for url, contents in self.extracted_data.items():
                     for heading, sections in contents.items():
                         writer.writerow([url, heading, ' '.join(sections)])
-
-if __name__ == "__main__":
-    base_url = "http://www.columbia.edu/~fdc/sample.html"
-    user_prompt = "AI"
-    crawler = RufusCrawler(base_url, user_prompt)
-    asyncio.run(crawler.start_crawl())
