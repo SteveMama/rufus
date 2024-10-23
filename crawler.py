@@ -6,7 +6,7 @@ from urllib.parse import urljoin
 import random
 import asyncio
 import aiohttp
-from aiohttp import ClientResponseError, ClientConnectorError, ClientHttpProxyError, ServerTimeoutError
+from aiohttp import ClientResponseError, ClientConnectorError, ClientHttpProxyError, ServerTimeoutError, TooManyRedirects
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
@@ -14,6 +14,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
+import csv
 
 class RufusCrawler:
     def __init__(self, base_url, user_prompt):
@@ -47,7 +48,7 @@ class RufusCrawler:
                     if sibling.name in ['h1', 'h2', 'h3']:
                         break
                     section_text = sibling.get_text(strip=True)
-                    if section_text and self.is_relevant(section_text):
+                    if section_text:
                         sections.append(section_text)
                 if sections:
                     content[heading_text] = sections
@@ -68,15 +69,11 @@ class RufusCrawler:
                     html = await response.text()
                     soup = BeautifulSoup(html, 'html.parser')
                     return soup
-                elif response.status == 403:
-                    print(f"Forbidden access to {url}: {response.status}")
-                elif response.status == 404:
-                    print(f"Page not found {url}: {response.status}")
-                else:
-                    print(f"Error accessing {url}: {response.status}")
+                elif response.status == 429:
+                    await asyncio.sleep(random.uniform(5, 10))
+                    return await self.fetch(session, url)
                 return None
-        except (ClientResponseError, ClientConnectorError, ClientHttpProxyError, ServerTimeoutError, ValueError) as e:
-            print(f"Error accessing {url}: {e}")
+        except (ClientResponseError, ClientConnectorError, ClientHttpProxyError, ServerTimeoutError, TooManyRedirects, ValueError):
             return None
 
     def fetch_js_content(self, url):
@@ -91,8 +88,7 @@ class RufusCrawler:
             driver.quit()
             soup = BeautifulSoup(content, 'html.parser')
             return soup
-        except Exception as e:
-            print(f"Error accessing {url} with JS rendering: {e}")
+        except Exception:
             return None
 
     async def validate_link(self, session, url):
@@ -116,9 +112,12 @@ class RufusCrawler:
             content = self.extract_content(soup)
             if content:
                 self.extracted_data[url] = content
+                # Incrementally save progress
+                self.save_to_json()
+                self.save_to_csv()
             if depth > 1:
                 links = self.extract_links(soup)
-                tasks = [self.crawl_page(link, session, depth - 1, use_js) for link in links if await self.validate_link(session, link)]
+                tasks = [self.crawl_page(link, session, depth - 1, use_js) for link in links]
                 await asyncio.gather(*tasks)
 
     async def start_crawl(self):
@@ -128,17 +127,29 @@ class RufusCrawler:
                 content = self.extract_content(soup)
                 if content:
                     self.extracted_data[self.base_url] = content
+                    # Incrementally save progress
+                    self.save_to_json()
+                    self.save_to_csv()
                 links = self.extract_links(soup)
-                tasks = [self.crawl_page(link, session, depth=2, use_js=True) for link in links if await self.validate_link(session, link)]
+                tasks = [self.crawl_page(link, session, depth=2, use_js=True) for link in links]
                 await asyncio.gather(*tasks)
 
     def save_to_json(self, filename='output.json'):
-        with open(filename, 'w') as f:
-            json.dump(self.extracted_data, f, indent=4)
+        if self.extracted_data:
+            with open(filename, 'w') as f:
+                json.dump(self.extracted_data, f, indent=4)
+
+    def save_to_csv(self, filename='output.csv'):
+        if self.extracted_data:
+            with open(filename, mode='w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(['URL', 'Heading', 'Content'])
+                for url, contents in self.extracted_data.items():
+                    for heading, sections in contents.items():
+                        writer.writerow([url, heading, ' '.join(sections)])
 
 if __name__ == "__main__":
     base_url = "https://medium.com"
-    user_prompt = "scrape application information"
+    user_prompt = "AI"
     crawler = RufusCrawler(base_url, user_prompt)
     asyncio.run(crawler.start_crawl())
-    crawler.save_to_json()
