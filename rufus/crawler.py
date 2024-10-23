@@ -19,18 +19,10 @@ import time
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
 import os
-
-class RufusClient:
-    def __init__(self, api_key=None):
-        self.api_key = api_key
-
-    def scrape(self, url, user_prompt):
-        crawler = RufusCrawler(url, user_prompt)
-        asyncio.run(crawler.start_crawl())
-        return crawler.extracted_data
+import openai
 
 class RufusCrawler:
-    def __init__(self, base_url, user_prompt):
+    def __init__(self, base_url, user_prompt, api_key=None):
         self.base_url = base_url
         self.user_prompt = user_prompt.lower()
         self.visited_urls = set()
@@ -42,6 +34,9 @@ class RufusCrawler:
             'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1'
         ]
         self.refined_keywords = user_prompt.split()
+        self.api_key = api_key
+        if self.api_key:
+            openai.api_key = self.api_key
 
     def extract_links(self, soup):
         links = set()
@@ -81,7 +76,6 @@ class RufusCrawler:
                 if list_items:
                     content[current_heading].extend(list_items)
 
-        # Extract meta description and keywords for additional context
         meta_description = soup.find('meta', attrs={'name': 'description'})
         if meta_description and meta_description.get('content') and self.is_relevant(meta_description.get('content')):
             content['Meta Description'] = [meta_description['content']]
@@ -119,10 +113,8 @@ class RufusCrawler:
             chrome_options.add_argument(f"user-agent={random.choice(self.user_agents)}")
             driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
             driver.get(url)
-            # Adaptive JavaScript handling: wait for specific elements if necessary
             try:
                 WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-                # Handling "Load more" or similar buttons if present
                 while True:
                     load_more_buttons = driver.find_elements(By.XPATH, "//*[contains(text(), 'Load more') or contains(text(), 'Show more')]")
                     if load_more_buttons:
@@ -166,9 +158,12 @@ class RufusCrawler:
             if content and content_hash not in self.content_hashes:
                 self.content_hashes.add(content_hash)
                 self.extracted_data[url] = content
-                # Incrementally save progress
                 self.save_to_json()
                 self.save_to_csv()
+                if self.api_key:
+                    refined_keywords = self.refine_keywords_with_llm(content)
+                    if refined_keywords:
+                        self.refined_keywords = refined_keywords
             if depth > 1:
                 links = self.extract_links(soup)
                 tasks = [self.crawl_page(link, session, depth - 1, use_js) for link in links]
@@ -183,12 +178,31 @@ class RufusCrawler:
                 if content and content_hash not in self.content_hashes:
                     self.content_hashes.add(content_hash)
                     self.extracted_data[self.base_url] = content
-                    # Incrementally save progress
                     self.save_to_json()
                     self.save_to_csv()
+                    if self.api_key:
+                        refined_keywords = self.refine_keywords_with_llm(content)
+                        if refined_keywords:
+                            self.refined_keywords = refined_keywords
                 links = self.extract_links(soup)
                 tasks = [self.crawl_page(link, session, 2, True) for link in links]
                 await asyncio.gather(*tasks)
+
+    def refine_keywords_with_llm(self, content):
+        prompt = f"Extracted Content: {json.dumps(content)}\nPlease provide relevant keywords for further crawling."
+        try:
+            response = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant."},
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            content = response['choices'][0]['message']['content']
+            keywords_dict = json.loads(content)
+            return keywords_dict.get('keywords', [])
+        except (openai.error.OpenAIError, json.JSONDecodeError):
+            return []
 
     def save_to_json(self, filename='output.json'):
         if self.extracted_data:

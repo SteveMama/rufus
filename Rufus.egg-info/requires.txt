@@ -1,0 +1,6 @@
+requests
+beautifulsoup4
+aiohttp
+selenium
+webdriver_manager
+openai==0.28

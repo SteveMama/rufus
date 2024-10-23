@@ -2,7 +2,7 @@ import asyncio
 import openai
 import json
 import os
-from crawler import RufusCrawler
+from rufus.crawler import RufusCrawler
 
 # Set OpenAI API key
 api_key = os.getenv('OPENAI_API_KEY')
