@@ -16,8 +16,8 @@ To install Rufus, follow these steps:
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/Rufus.git
-   cd Rufus
+   git clone https://github.com/SteveMama/rufus.git
+   cd rufus
    ```
 
 2. Install the package using `setup.py`:
